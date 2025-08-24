@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Dhaka Checkpoints • MapLibre Globe</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link href="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.css" rel="stylesheet" />
+  <style>
+    html,body,#map{height:100%;margin:0}
+    .hud{position:absolute;top:10px;left:10px;background:rgba(0,0,0,.48);color:#fff;
+         padding:8px 10px;border-radius:10px;font:14px/1.2 system-ui,sans-serif;z-index:2}
+    .btn{display:inline-block;margin-top:6px;padding:6px 8px;border-radius:8px;background:#1f6feb;color:#fff;cursor:pointer}
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div class="hud">
+    Drag to rotate • Scroll to zoom • Right‑drag to pitch
+    <div class="btn" id="dropRandom">Drop random checkpoint</div>
+  </div>
+
+  <script src="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.js"></script>
+  <script>
+    // 1) Base globe (same as your first setup)
+    const map = new maplibregl.Map({
+      container: 'map',
+      projection: 'globe',
+      center: [90.4125, 23.8103], // Dhaka
+      zoom: 10.2,
+      pitch: 30,
+      style: {
+        version: 8,
+        sources: {
+          osm: {
+            type: 'raster',
+            tiles: [
+              'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+              'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
+              'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'
+            ],
+            tileSize: 256,
+            attribution: '&copy; OpenStreetMap contributors'
+          }
+        },
+        layers: [{ id: 'osm', type: 'raster', source: 'osm' }]
+      }
+    });
+
+    map.addControl(new maplibregl.NavigationControl({ visualizePitch:true }));
+    map.addControl(new maplibregl.ScaleControl({ unit:'metric' }));
+    map.addControl(new maplibregl.FullscreenControl());
+    map.on('style.load', () => map.setFog({}));
+
+    // 2) Your checkpoints as GeoJSON
+    const checkpoints = [
+      { name: "Shahbagh",           note: "Cultural hub",            coords: [90.3954, 23.7389] },
+      { name: "Farmgate",           note: "Busy traffic node",       coords: [90.3910, 23.7561] },
+      { name: "Gulshan 2 Circle",   note: "Business district",       coords: [90.4169, 23.7925] },
+      { name: "Motijheel",          note: "Financial district",      coords: [90.4212, 23.7324] },
+      { name: "Dhanmondi 27",       note: "Cafés & shops",           coords: [90.3679, 23.7586] }
+    ];
+
+    function toFeatureCollection(list){
+      return {
+        type: "FeatureCollection",
+        features: list.map(p => ({
+          type: "Feature",
+          properties: { name: p.name, note: p.note || "" },
+          geometry: { type: "Point", coordinates: p.coords }
+        }))
+      };
+    }
+
+    // 3) Add a source & three layers (circles, labels, and an optional route)
+    map.on('load', () => {
+      // Points
+      map.addSource('checkpoints', { type: 'geojson', data: toFeatureCollection(checkpoints) });
+
+      // Circles (pins)
+      map.addLayer({
+        id: 'checkpoints-circles',
+        type: 'circle',
+        source: 'checkpoints',
+        paint: {
+          'circle-color': '#1f6feb',
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 2,
+          // scale with zoom a little
+          'circle-radius': [
+            'interpolate', ['linear'], ['zoom'],
+            6, 4,
+            12, 7,
+            18, 10
+          ]
+        }
+      });
+
+      // Labels
+      map.addLayer({
+        id: 'checkpoints-labels',
+        type: 'symbol',
+        source: 'checkpoints',
+        layout: {
+          'text-field': ['get', 'name'],
+          'text-font': ['Noto Sans Regular'],
+          'text-offset': [0, 1.1],
+          'text-size': ['interpolate', ['linear'], ['zoom'], 8, 10, 14, 14, 18, 18],
+          'text-anchor': 'top'
+        },
+        paint: {
+          'text-halo-color': '#000',
+          'text-halo-width': 1.0,
+          'text-color': '#ffffff'
+        }
+      });
+
+      // Optional: a dashed route connecting checkpoints by order
+      map.addSource('checkpoint-route', {
+        type: 'geojson',
+        data: {
+          type: 'Feature',
+          properties: {},
+          geometry: {
+            type: 'LineString',
+            coordinates: checkpoints.map(p => p.coords)
+          }
+        }
+      });
+
+      map.addLayer({
+        id: 'checkpoint-route-line',
+        type: 'line',
+        source: 'checkpoint-route',
+        paint: {
+          'line-color': '#00d084',
+          'line-width': 2,
+          'line-dasharray': [2, 2]
+        }
+      });
+
+      // 4) Interactions: click to popup + flyTo
+      map.on('click', 'checkpoints-circles', (e) => {
+        const f = e.features[0];
+        const [lng, lat] = f.geometry.coordinates.slice();
+        const name = f.properties.name;
+        const note = f.properties.note || '';
+
+        new maplibregl.Popup()
+          .setLngLat([lng, lat])
+          .setHTML(`<b>${name}</b><br/>${note}`)
+          .addTo(map);
+
+        map.flyTo({ center: [lng, lat], zoom: 13.5, pitch: 50, bearing: map.getBearing(), essential: true });
+      });
+
+      map.on('mouseenter', 'checkpoints-circles', () => map.getCanvas().style.cursor = 'pointer');
+      map.on('mouseleave', 'checkpoints-circles', () => map.getCanvas().style.cursor = '');
+
+      // 5) Helper to add checkpoints dynamically from code (or future API)
+      window.addCheckpoint = function(name, lng, lat, note="") {
+        checkpoints.push({ name, coords:[lng, lat], note });
+        map.getSource('checkpoints').setData(toFeatureCollection(checkpoints));
+        map.getSource('checkpoint-route').setData({
+          type:'Feature', properties:{},
+          geometry:{ type:'LineString', coordinates: checkpoints.map(p => p.coords) }
+        });
+      };
+
+      // Button to demo dynamic add
+      document.getElementById('dropRandom').onclick = () => {
+        // small jitter around central Dhaka
+        const base = [90.4125, 23.8103];
+        const lng = base[0] + (Math.random()-0.5)*0.12;
+        const lat = base[1] + (Math.random()-0.5)*0.10;
+        addCheckpoint(`CP-${checkpoints.length+1}`, lng, lat, "Added on the fly");
+      };
+    });
+  </script>
+</body>
+</html>
