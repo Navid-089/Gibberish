@@ -30,7 +30,7 @@ def koch_curve(p1, p2, level):
 
 # --- Setup ---
 level = 0
-max_level = 12
+max_level = 7
 p1, p2 = [0, 0], [1, 0]
 
 fig, ax = plt.subplots()
